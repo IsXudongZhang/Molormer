@@ -9,10 +9,9 @@ def Model_config():
     # Graphormer
     config['n_layers'] = 3
     config['num_heads'] = 8
-    config['hidden_dim'] = 256
 
+    config['hidden_dim'] = 256
     config['fnn_dim'] = 256
-    config['multi_hop_max_dist'] = 20
 
     config['input_dropout_rate'] = 0
     config['encoder_dropout_rate'] = 0

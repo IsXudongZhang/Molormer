@@ -18,12 +18,12 @@ class Molormer(nn.Sequential):
         super(Molormer, self).__init__()
 
         self.gpus = torch.cuda.device_count()
-        self.n_layers = config['n_layers']
+        self.num_layers = config['num_layers']
         self.num_heads = config['num_heads']
         self.hidden_dim = config['hidden_dim']
-        self.ffn_dim = config['fnn_dim']
+        self.inter_dim = config['inter_dim']
         self.flatten_dim = config['flatten_dim']
-        self.multi_hop_max_dist = config['multi_hop_max_dist']
+        self.multi_hop_max_dist = 20
         
         # dropout
         self.encoder_dropout = config['encoder_dropout_rate']
@@ -37,22 +37,9 @@ class Molormer(nn.Sequential):
         self.d_spatial_pos_encoder = nn.Embedding(512, self.num_heads, padding_idx=0)
         self.d_in_degree_encoder = nn.Embedding(512, self.hidden_dim, padding_idx=0)
         self.d_out_degree_encoder = nn.Embedding(512, self.hidden_dim, padding_idx=0)
-
-        self.d_encoders = Encoder(
-            [
-                EncoderLayer(
-                    AttentionLayer(ProbAttention(False, factor=5, attention_dropout=0.0, output_attention=False),
-                                   d_model=self.hidden_dim, n_heads=self.num_heads, mix=False),
-                    d_model=self.hidden_dim,
-                    d_ff=self.ffn_dim,
-                    dropout=0.0,
-                ) for l in range(self.n_layers) 
-            ],
-            [
-                Distilling_layer(self.hidden_dim) for _ in range(self.n_layers - 1) 
-            ] ,
-            norm_layer=torch.nn.LayerNorm(self.hidden_dim)
-        )
+      
+        self.d_encoders = Encoder(hidden_dim=self.hidden_dim, inter_dim=self.inter_dim,
+                                  n_layers=self.num_layers, n_heads=self.num_heads)
 
         self.d_final_ln = nn.LayerNorm(self.hidden_dim)
         self.d_graph_token = nn.Embedding(1, self.hidden_dim)
@@ -85,6 +72,7 @@ class Molormer(nn.Sequential):
         drug2_graph_attn_bias = d2_attn_bias.clone()
         drug2_graph_attn_bias = drug2_graph_attn_bias.unsqueeze(1).repeat(
             1, self.num_heads, 1, 1)  # [n_graph, n_head, n_node+1, n_node+1]
+
         # spatial pos
         # [n_graph, n_node, n_node, n_head] -> [n_graph, n_head, n_node, n_node]
         drug1_spatial_pos_bias = self.d_spatial_pos_encoder(d1_spatial_pos).permute(0, 3, 1, 2)
@@ -107,9 +95,10 @@ class Molormer(nn.Sequential):
         drug1_spatial_pos[drug1_spatial_pos == 0] = 1  # set pad to 1
         # set 1 to 1, x > 1 to x - 1
         drug1_spatial_pos = torch.where(drug1_spatial_pos > 1, drug1_spatial_pos - 1, drug1_spatial_pos)
-        if self.multi_hop_max_dist > 0:
-            drug1_spatial_pos = drug1_spatial_pos.clamp(0, self.multi_hop_max_dist)
-            drug1_edge_input = d1_edge_input[:, :, :, :self.multi_hop_max_dist, :]
+       
+        drug1_spatial_pos = drug1_spatial_pos.clamp(0, self.multi_hop_max_dist)
+        drug1_edge_input = d1_edge_input[:, :, :, :self.multi_hop_max_dist, :]
+        
         # [n_graph, n_node, n_node, max_dist, n_head]
         drug1_edge_input = self.d_edge_encoder(drug1_edge_input).mean(-2)
 
@@ -128,9 +117,10 @@ class Molormer(nn.Sequential):
         drug2_spatial_pos[drug2_spatial_pos == 0] = 1  # set pad to 1
         # set 1 to 1, x > 1 to x - 1
         drug2_spatial_pos = torch.where(drug2_spatial_pos > 1, drug2_spatial_pos - 1, drug2_spatial_pos)
-        if self.multi_hop_max_dist > 0:
-            drug2_spatial_pos = drug2_spatial_pos.clamp(0, self.multi_hop_max_dist)
-            drug2_edge_input = d2_edge_input[:, :, :, :self.multi_hop_max_dist, :]
+      
+        drug2_spatial_pos = drug2_spatial_pos.clamp(0, self.multi_hop_max_dist)
+        drug2_edge_input = d2_edge_input[:, :, :, :self.multi_hop_max_dist, :]
+        
         # [n_graph, n_node, n_node, max_dist, n_head]
         drug2_edge_input = self.d_edge_encoder(drug2_edge_input).mean(-2)
 
@@ -212,22 +202,20 @@ class FeedForwardNetwork(nn.Module):
         x = self.layer2(x)
         return x
 
-
+                                   
 class AttentionLayer(nn.Module):
-    def __init__(self, attention, d_model, n_heads,
-                 d_keys=None, d_values=None, mix=False):
+    def __init__(self, hidden_dim, n_heads):
         super(AttentionLayer, self).__init__()
 
-        d_keys = d_keys or (d_model // n_heads)
-        d_values = d_values or (d_model // n_heads)
+        key_dim = hidden_dim // n_heads
+        value_dim = hidden_dim // n_heads
 
-        self.inner_attention = attention
-        self.query_projection = nn.Linear(d_model, d_keys * n_heads)
-        self.key_projection = nn.Linear(d_model, d_keys * n_heads)
-        self.value_projection = nn.Linear(d_model, d_values * n_heads)
-        self.out_projection = nn.Linear(d_values * n_heads, d_model)
+        self.inner_attention = ProbAttention(False, factor=5, attention_dropout=0.0, output_attention=False)
+        self.query_projection = nn.Linear(hidden_dim, key_dim * n_heads)
+        self.key_projection = nn.Linear(hidden_dim, key_dim * n_heads)
+        self.value_projection = nn.Linear(hidden_dim, value_dim * n_heads)
+        self.out_projection = nn.Linear(value_dim * n_heads, hidden_dim)
         self.n_heads = n_heads
-        self.mix = mix
 
     def forward(self, queries, keys, values, attn_mask):
         B, L, _ = queries.shape
@@ -238,14 +226,8 @@ class AttentionLayer(nn.Module):
         keys = self.key_projection(keys).view(B, S, H, -1)
         values = self.value_projection(values).view(B, S, H, -1)
 
-        out, attn = self.inner_attention(
-            queries,
-            keys,
-            values,
-            attn_mask
-        )
-        if self.mix:
-            out = out.transpose(2, 1).contiguous()
+        out, attn = self.inner_attention(queries, keys, values, attn_mask)
+     
         out = out.view(B, L, -1)
 
         return self.out_projection(out), attn
@@ -321,7 +303,7 @@ class ProbAttention(nn.Module):
 
     def _update_context(self, context_in, V, scores, index, L_Q, attn_mask):
         B, H, L_V, D = V.shape
-
+  
         if self.mask_flag:
             attn_mask = ProbMask(B, H, L_Q, index, scores, device=V.device)
             scores.masked_fill_(attn_mask.mask, -np.inf)
@@ -366,13 +348,12 @@ class ProbAttention(nn.Module):
         return context.transpose(2, 1).contiguous(), attn
 
 
-
 class Encoder(nn.Module):
-    def __init__(self, attn_layers, conv_layers=None, norm_layer=None):
+    def __init__(self, hidden_dim, inter_dim, n_layers, n_heads, dropout=0.0):
         super(Encoder, self).__init__()
-        self.attn_layers = nn.ModuleList(attn_layers)
-        self.conv_layers = nn.ModuleList(conv_layers) if conv_layers is not None else None
-        self.norm = norm_layer
+        self.attn_layers = nn.ModuleList(Encoder_layer(hidden_dim, inter_dim, n_heads, dropout) for l in range(n_layers))
+        self.conv_layers = nn.ModuleList(Distilling_layer(hidden_dim) for _ in range(n_layers - 1))
+        self.norm =torch.nn.LayerNorm(hidden_dim)
 
     def forward(self, x, attn_mask=None):
         attns = []
@@ -383,28 +364,27 @@ class Encoder(nn.Module):
         x, attn = self.attn_layers[-1](x, attn_mask=attn_mask)
         attns.append(attn)
     
-        if self.norm is not None:
-            x = self.norm(x)
+        x = self.norm(x)
+        
         return x
 
 
-class EncoderLayer(nn.Module):
-    def __init__(self, attention, d_model, d_ff=None, dropout=0.1):
-        super(EncoderLayer, self).__init__()
-        d_ff = d_ff or 4 * d_model
-        self.attention = attention
-        self.conv1 = nn.Conv1d(d_model, d_ff, kernel_size=1)
-        self.conv2 = nn.Conv1d(d_ff, d_model, kernel_size=1)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+class Encoder_layer(nn.Module):
+    def __init__(self, hidden_dim, inter_dim, n_heads, dropout):
+        super(Encoder_layer, self).__init__()
+        self.attention = AttentionLayer(hidden_dim=hidden_dim, n_heads=n_heads)
+        self.conv1 = nn.Conv1d(hidden_dim, inter_dim, kernel_size=1)
+        self.conv2 = nn.Conv1d(inter_dim, hidden_dim, kernel_size=1)
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.norm2 = nn.LayerNorm(hidden_dim)
         self.dropout = nn.Dropout(dropout)
-        self.activation = F.relu
+        self.relu = F.relu
 
     def forward(self, x, attn_mask=None):
-        new_x, attn = self.attention(x, x, x, attn_mask=attn_mask)
-        x = x + self.dropout(new_x)
+        attn_x, attn = self.attention(x, x, x, attn_mask=attn_mask)
+        x = x + self.dropout(attn_x)
         y = x = self.norm1(x)
-        y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
+        y = self.dropout(self.relu(self.conv1(y.transpose(-1, 1))))
         y = self.dropout(self.conv2(y).transpose(-1, 1))
 
         return self.norm2(x + y), attn
@@ -421,6 +401,6 @@ class Distilling_layer(nn.Module):
 
     def forward(self, x):
         x = self.conv(x.permute(0, 2, 1))
-        x = self.maxPool(self.activation(self.norm(x))).transpose(1, 2)
+        out = self.maxPool(self.activation(self.norm(x))).transpose(1, 2)
 
-        return x
+        return out
