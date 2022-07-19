@@ -11,7 +11,7 @@ np.random.seed(1)
 
 class Molormer(nn.Sequential):
     '''
-        Molormer Network with spatial encoder and lightweight attention block
+        Molormer Network with spatial graph encoder and lightweight attention block
     '''
 
     def __init__(self, **config):
@@ -61,39 +61,33 @@ class Molormer(nn.Sequential):
 
     def forward(self, d1_node, d1_attn_bias, d1_spatial_pos, d1_in_degree, d1_out_degree, d1_edge_input,
                       d2_node, d2_attn_bias, d2_spatial_pos, d2_in_degree, d2_out_degree, d2_edge_input):
-        # graph_attn_bias
+       
         drug1_n_graph, drug1_n_node = d1_node.size()[:2]
         drug2_n_graph, drug2_n_node = d2_node.size()[:2]
 
         drug1_graph_attn_bias = d1_attn_bias.clone()
-        drug1_graph_attn_bias = drug1_graph_attn_bias.unsqueeze(1).repeat(
-            1, self.num_heads, 1, 1)  # [n_graph, n_head, n_node+1, n_node+1]
+        drug1_graph_attn_bias = drug1_graph_attn_bias.unsqueeze(1).repeat(1, self.num_heads, 1, 1) 
 
         drug2_graph_attn_bias = d2_attn_bias.clone()
-        drug2_graph_attn_bias = drug2_graph_attn_bias.unsqueeze(1).repeat(
-            1, self.num_heads, 1, 1)  # [n_graph, n_head, n_node+1, n_node+1]
+        drug2_graph_attn_bias = drug2_graph_attn_bias.unsqueeze(1).repeat(1, self.num_heads, 1, 1) 
 
-        # spatial pos
-        # [n_graph, n_node, n_node, n_head] -> [n_graph, n_head, n_node, n_node]
         drug1_spatial_pos_bias = self.d_spatial_pos_encoder(d1_spatial_pos).permute(0, 3, 1, 2)
-        drug1_graph_attn_bias[:, :, 1:, 1:] = drug1_graph_attn_bias[:,
-                                                        :, 1:, 1:] + drug1_spatial_pos_bias
+        drug1_graph_attn_bias[:, :, 1:, 1:] = drug1_graph_attn_bias[:, :, 1:, 1:] + drug1_spatial_pos_bias
 
         drug2_spatial_pos_bias = self.d_spatial_pos_encoder(d2_spatial_pos).permute(0, 3, 1, 2)
-        drug2_graph_attn_bias[:, :, 1:, 1:] = drug2_graph_attn_bias[:,
-                                                        :, 1:, 1:] + drug2_spatial_pos_bias
+        drug2_graph_attn_bias[:, :, 1:, 1:] = drug2_graph_attn_bias[:, :, 1:, 1:] + drug2_spatial_pos_bias
 
-        # reset spatial pos here
+        
         t = self.graph_token_virtual_distance.weight.view(1, self.num_heads, 1)
         drug1_graph_attn_bias[:, :, 1:, 0] = drug1_graph_attn_bias[:, :, 1:, 0] + t
         drug1_graph_attn_bias[:, :, 0, :] = drug1_graph_attn_bias[:, :, 0, :] + t
         drug2_graph_attn_bias[:, :, 1:, 0] = drug2_graph_attn_bias[:, :, 1:, 0] + t
         drug2_graph_attn_bias[:, :, 0, :] = drug2_graph_attn_bias[:, :, 0, :] + t
 
-        # edge_input
+        
         drug1_spatial_pos = d1_spatial_pos.clone()
         drug1_spatial_pos[drug1_spatial_pos == 0] = 1  # set pad to 1
-        # set 1 to 1, x > 1 to x - 1
+
         drug1_spatial_pos = torch.where(drug1_spatial_pos > 1, drug1_spatial_pos - 1, drug1_spatial_pos)
        
         drug1_spatial_pos = drug1_spatial_pos.clamp(0, self.multi_hop_max_dist)
@@ -103,21 +97,18 @@ class Molormer(nn.Sequential):
         drug1_edge_input = self.d_edge_encoder(drug1_edge_input).mean(-2)
 
         max_dist = drug1_edge_input.size(-2)
-        drug1_edge_input_flat = drug1_edge_input.permute(
-            3, 0, 1, 2, 4).reshape(max_dist, -1, self.num_heads)
-        drug1_edge_input_flat = torch.bmm(drug1_edge_input_flat, self.d_edge_dis_encoder.weight.reshape(
-            -1, self.num_heads, self.num_heads)[:max_dist, :, :])
-        drug1_edge_input = drug1_edge_input_flat.reshape(
-            max_dist, drug1_n_graph, drug1_n_node, drug1_n_node, self.num_heads).permute(1, 2, 3, 0, 4)        # 2,43,43,20,8
-        drug1_edge_input = (drug1_edge_input.sum(-2) /
-                      (drug1_spatial_pos.float().unsqueeze(-1))).permute(0, 3, 1, 2)          # 2,8,43,43
-###################################################################################################################
+        drug1_edge_input_flat = drug1_edge_input.permute(3, 0, 1, 2, 4).reshape(max_dist, -1, self.num_heads)
+        drug1_edge_input_flat = torch.bmm(drug1_edge_input_flat, self.d_edge_dis_encoder.weight.reshape(-1, self.num_heads, self.num_heads)[:max_dist, :, :])
+        drug1_edge_input = drug1_edge_input_flat.reshape(max_dist, drug1_n_graph, drug1_n_node, drug1_n_node, self.num_heads).permute(1, 2, 3, 0, 4)        # 2,43,43,20,8
+        drug1_edge_input = (drug1_edge_input.sum(-2) /(drug1_spatial_pos.float().unsqueeze(-1))).permute(0, 3, 1, 2)          # 2,8,43,43
+
+#################################################################################################################
+       
         # edge_input
         drug2_spatial_pos = d2_spatial_pos.clone()
         drug2_spatial_pos[drug2_spatial_pos == 0] = 1  # set pad to 1
-        # set 1 to 1, x > 1 to x - 1
+        
         drug2_spatial_pos = torch.where(drug2_spatial_pos > 1, drug2_spatial_pos - 1, drug2_spatial_pos)
-      
         drug2_spatial_pos = drug2_spatial_pos.clamp(0, self.multi_hop_max_dist)
         drug2_edge_input = d2_edge_input[:, :, :, :self.multi_hop_max_dist, :]
         
@@ -125,44 +116,28 @@ class Molormer(nn.Sequential):
         drug2_edge_input = self.d_edge_encoder(drug2_edge_input).mean(-2)
 
         max_dist = drug2_edge_input.size(-2)
-        drug2_edge_input_flat = drug2_edge_input.permute(
-            3, 0, 1, 2, 4).reshape(max_dist, -1, self.num_heads)
-        drug2_edge_input_flat = torch.bmm(drug2_edge_input_flat, self.d_edge_dis_encoder.weight.reshape(
-            -1, self.num_heads, self.num_heads)[:max_dist, :, :])
-        drug2_edge_input = drug2_edge_input_flat.reshape(
-            max_dist, drug2_n_graph, drug2_n_node, drug2_n_node, self.num_heads).permute(1, 2, 3, 0, 4)  # 2,43,43,20,8
-        drug2_edge_input = (drug2_edge_input.sum(-2) /
-                            (drug2_spatial_pos.float().unsqueeze(-1))).permute(0, 3, 1, 2)  # 2,8,43,43
+        drug2_edge_input_flat = drug2_edge_input.permute(3, 0, 1, 2, 4).reshape(max_dist, -1, self.num_heads)
+        drug2_edge_input_flat = torch.bmm(drug2_edge_input_flat, self.d_edge_dis_encoder.weight.reshape(-1, self.num_heads, self.num_heads)[:max_dist, :, :])
+        drug2_edge_input = drug2_edge_input_flat.reshape(max_dist, drug2_n_graph, drug2_n_node, drug2_n_node, self.num_heads).permute(1, 2, 3, 0, 4)  # 2,43,43,20,8
+        drug2_edge_input = (drug2_edge_input.sum(-2) / (drug2_spatial_pos.float().unsqueeze(-1))).permute(0, 3, 1, 2)  # 2,8,43,43
 
-        # reset
-        drug1_graph_attn_bias[:, :, 1:, 1:] = drug1_graph_attn_bias[:,
-                                              :, 1:, 1:] + drug1_edge_input
+        
+        drug1_graph_attn_bias[:, :, 1:, 1:] = drug1_graph_attn_bias[:,:, 1:, 1:] + drug1_edge_input
         drug1_graph_attn_bias = drug1_graph_attn_bias + d1_attn_bias.unsqueeze(1)
 
-        drug2_graph_attn_bias[:, :, 1:, 1:] = drug2_graph_attn_bias[:,
-                                              :, 1:, 1:] + drug2_edge_input
+        drug2_graph_attn_bias[:, :, 1:, 1:] = drug2_graph_attn_bias[:,:, 1:, 1:] + drug2_edge_input
         drug2_graph_attn_bias = drug2_graph_attn_bias + d2_attn_bias.unsqueeze(1)
 
         # node feauture + graph token
-        drug1_node_feature = self.d_node_encoder(d1_node).sum(
-            dim=-2)  # [n_graph, n_node, n_hidden
-        drug1_node_feature = drug1_node_feature + \
-                       self.d_in_degree_encoder(d1_in_degree) + \
-                       self.d_out_degree_encoder(d1_out_degree)
-        drug1_graph_token_feature = self.d_graph_token.weight.unsqueeze(
-            0).repeat(drug1_n_graph, 1, 1)
-        drug1_graph_node_feature = torch.cat(
-            [drug1_graph_token_feature, drug1_node_feature], dim=1)
+        drug1_node_feature = self.d_node_encoder(d1_node).sum(dim=-2)  
+        drug1_node_feature = drug1_node_feature + self.d_in_degree_encoder(d1_in_degree) + self.d_out_degree_encoder(d1_out_degree)
+        drug1_graph_token_feature = self.d_graph_token.weight.unsqueeze(0).repeat(drug1_n_graph, 1, 1)
+        drug1_graph_node_feature = torch.cat([drug1_graph_token_feature, drug1_node_feature], dim=1)
 
-        drug2_node_feature = self.d_node_encoder(d2_node).sum(
-            dim=-2)  # [n_graph, n_node, n_hidden
-        drug2_node_feature = drug2_node_feature + \
-                             self.d_in_degree_encoder(d2_in_degree) + \
-                             self.d_out_degree_encoder(d2_out_degree)
-        drug2_graph_token_feature = self.d_graph_token.weight.unsqueeze(
-            0).repeat(drug2_n_graph, 1, 1)
-        drug2_graph_node_feature = torch.cat(
-            [drug2_graph_token_feature, drug2_node_feature], dim=1)
+        drug2_node_feature = self.d_node_encoder(d2_node).sum(dim=-2) 
+        drug2_node_feature = drug2_node_feature + self.d_in_degree_encoder(d2_in_degree) + self.d_out_degree_encoder(d2_out_degree)
+        drug2_graph_token_feature = self.d_graph_token.weight.unsqueeze(0).repeat(drug2_n_graph, 1, 1)
+        drug2_graph_node_feature = torch.cat([drug2_graph_token_feature, drug2_node_feature], dim=1)
 
         # transfomrer encoder
         drug1_output = self.input_dropout(drug1_graph_node_feature)
@@ -185,8 +160,6 @@ class Molormer(nn.Sequential):
         #score = self.softmax(score)
 
         return score
-
-    # help classes
 
 
 class FeedForwardNetwork(nn.Module):
@@ -268,13 +241,13 @@ class ProbAttention(nn.Module):
         self.dropout = nn.Dropout(attention_dropout)
 
     def _prob_QK(self, Q, K, sample_k, n_top):  # n_top: c*ln(L_q)
-        # Q [B, H, L, D]
+      
         B, H, L_K, E = K.shape
         _, _, L_Q, _ = Q.shape
 
         # calculate the sampled Q_K
         K_expand = K.unsqueeze(-3).expand(B, H, L_Q, L_K, E)
-        index_sample = torch.randint(L_K, (L_Q, sample_k))  # real U = U_part(factor*ln(L_k))*L_q
+        index_sample = torch.randint(L_K, (L_Q, sample_k))  
         K_sample = K_expand[:, :, torch.arange(L_Q).unsqueeze(1), index_sample, :]
         Q_K_sample = torch.matmul(Q.unsqueeze(-2), K_sample.transpose(-2, -1)).squeeze()
 
@@ -293,10 +266,10 @@ class ProbAttention(nn.Module):
     def _get_initial_context(self, V, L_Q):
         B, H, L_V, D = V.shape
         if not self.mask_flag:
-            # V_sum = V.sum(dim=-2)
+        
             V_sum = V.mean(dim=-2)
             contex = V_sum.unsqueeze(-2).expand(B, H, L_Q, V_sum.shape[-1]).clone()
-        else:  # use mask
+        else:  
             assert (L_Q == L_V)  # requires that L_Q == L_V, i.e. for self-attention only
             contex = V.cumsum(dim=-2)
         return contex
@@ -336,11 +309,10 @@ class ProbAttention(nn.Module):
 
         scores_top, index = self._prob_QK(queries, keys, sample_k=U_part, n_top=u)
 
-        # add scale factor
         scale = self.scale or 1. / sqrt(D)
         if scale is not None:
             scores_top = scores_top * scale
-        # get the context
+      
         context = self._get_initial_context(values, L_Q)
         # update the context with selected top_k queries
         context, attn = self._update_context(context, values, scores_top, index, L_Q, attn_mask)
