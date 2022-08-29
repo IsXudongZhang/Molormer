@@ -6,7 +6,7 @@ def Model_config():
     config['lr'] = 1e-4                       # initial learning rate
     config['num_classes'] = 86
     
-    # Graphormer
+    # Molormer
     config['n_layers'] = 3
     config['num_heads'] = 8
 
