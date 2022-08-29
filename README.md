@@ -1,6 +1,6 @@
 # BIB | Molormer: A Lightweight Self-Attention-Based Method Focused on Spatial Structure of Molecular Graph for Drug-Drug Interactions Prediction
 
-This repository contains the source code of Molormer (https://doi.org/10.1093/bib/bbac296).
+This repository contains the source code of Molormer published on BIB 2022(https://doi.org/10.1093/bib/bbac296).
 
 
 ## Setup
