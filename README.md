@@ -17,13 +17,9 @@ A conda environment can be created with
 
 ## Training
 
-To train of the models run:
-
 `python train.py`
 
 ## Predicting
-
-To prediction of the models run:
 
 `python predict.py`
 
