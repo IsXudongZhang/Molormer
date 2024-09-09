@@ -1,6 +1,10 @@
 # Molormer 
 :boom: The official repository of our paper "A Lightweight Self-Attention-Based Method Focused on Spatial Structure of Molecular Graph for Drug-Drug Interactions Prediction". ([https://doi.org/10.1093/bib/bbac296](https://doi.org/10.1093/bib/bbac296))
 
+<p align="center">
+  <img width="700" src="assets/overview.png" /> 
+</p>
+
 ## Setup
 
 A conda environment can be created with
