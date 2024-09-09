@@ -7,11 +7,9 @@ A conda environment can be created with
 
 `conda create --name molormer python=3.7`
 
-`conda activate molegent`
+`conda activate molormer`
 
 `conda update -n base conda`
-
-`conda env create -f environment.yaml`
 
 ## Training
 
