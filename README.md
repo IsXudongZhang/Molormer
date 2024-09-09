@@ -9,7 +9,7 @@ A conda environment can be created with
 
 `conda activate molormer`
 
-`conda update -n base conda`
+`conda install pytorch==1.6.0 torchvision==0.7.0 cudatoolkit=10.2 -c pytorch`
 
 ## Training
 
