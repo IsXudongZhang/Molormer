@@ -1,5 +1,5 @@
 # Molormer 
-:boom: The official repository of our paper "A Lightweight Self-Attention-Based Method Focused on Spatial Structure of Molecular Graph for Drug-Drug Interactions Prediction". ([https://doi.org/10.1093/bib/bbac296]((https://doi.org/10.1093/bib/bbac296)))
+:boom: The official repository of our paper "A Lightweight Self-Attention-Based Method Focused on Spatial Structure of Molecular Graph for Drug-Drug Interactions Prediction". ([https://doi.org/10.1093/bib/bbac296](https://doi.org/10.1093/bib/bbac296))
 
 ## Setup
 
